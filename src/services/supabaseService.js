@@ -31,6 +31,83 @@ const TABLE_REINES = 'reines';
 const TABLE_HAUSSES = 'hausses';
 const TABLE_TACHES = 'taches';
 const TABLE_RECOLTES = 'recoltes';
+const TABLE_TELEGRAM_USERS = 'telegram_users';
+
+
+// ============================================================================
+// GESTION DES UTILISATEURS TELEGRAM
+// ============================================================================
+
+/**
+ * Récupère ou crée un utilisateur à partir de son identifiant Telegram.
+ *
+ * Fonctionnement :
+ *   1. Cherche dans la table telegram_users un enregistrement avec ce telegram_id
+ *   2. Si trouvé → retourne le user_id associé
+ *   3. Si non trouvé → crée un nouvel enregistrement et retourne le user_id généré
+ *
+ * Le user_id est un UUID généré côté Supabase, indépendant de auth.users.
+ * Il sert de clé étrangère pour lier les données apicoles à l'utilisateur Telegram.
+ *
+ * @param {string|number} telegramId - Identifiant numérique unique de l'utilisateur Telegram
+ * @param {string|null} telegramUsername - Nom d'utilisateur Telegram (@username), peut être null
+ * @param {string|null} prenom - Prénom de l'utilisateur Telegram
+ * @param {string|null} nom - Nom de famille de l'utilisateur Telegram
+ * @returns {Promise<string>} UUID de l'utilisateur (user_id)
+ */
+async function getOrCreateUser(telegramId, telegramUsername = null, prenom = null, nom = null) {
+  const telegramIdStr = String(telegramId);
+
+  // Étape 1 : Recherche d'un utilisateur existant
+  const { data: existant, error: erreurRecherche } = await supabase
+    .from(TABLE_TELEGRAM_USERS)
+    .select('user_id, username')
+    .eq('telegram_id', telegramIdStr)
+    .limit(1)
+    .single();
+
+  if (existant && !erreurRecherche) {
+    // Mise à jour du username si changé (les utilisateurs Telegram peuvent le modifier)
+    if (telegramUsername && existant.username !== telegramUsername) {
+      await supabase
+        .from(TABLE_TELEGRAM_USERS)
+        .update({ username: telegramUsername, prenom, nom })
+        .eq('telegram_id', telegramIdStr);
+    }
+
+    return existant.user_id;
+  }
+
+  // Étape 2 : Création d'un nouvel utilisateur
+  const userId = crypto.randomUUID(); // UUID v4 généré côté Node.js
+
+  const { error: erreurCreation } = await supabase
+    .from(TABLE_TELEGRAM_USERS)
+    .insert({
+      telegram_id: telegramIdStr,
+      user_id: userId,
+      username: telegramUsername,
+      prenom: prenom,
+      nom: nom,
+    });
+
+  if (erreurCreation) {
+    // En cas de conflit (race condition), réessayer la lecture
+    const { data: retry } = await supabase
+      .from(TABLE_TELEGRAM_USERS)
+      .select('user_id')
+      .eq('telegram_id', telegramIdStr)
+      .limit(1)
+      .single();
+
+    if (retry) return retry.user_id;
+
+    throw new Error(`Échec création utilisateur Telegram : ${erreurCreation.message}`);
+  }
+
+  console.log(`[getOrCreateUser] Nouvel utilisateur Telegram créé : @${telegramUsername || telegramIdStr} → ${userId}`);
+  return userId;
+}
 
 
 // ============================================================================
@@ -642,6 +719,8 @@ async function getObservationsUrgentes() {
 // ============================================================================
 
 module.exports = {
+  // Utilisateurs Telegram
+  getOrCreateUser,
   // Sauvegarde
   saveObservation,
   saveIntervention,

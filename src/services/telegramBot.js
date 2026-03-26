@@ -14,7 +14,7 @@ const TelegramBot = require('node-telegram-bot-api');
 const https = require('https');
 const http = require('http');
 const { transcribeAudio, parseObservation } = require('./nlpService');
-const { saveAllEntities, getDernieresObservations, getObservationsUrgentes } = require('./supabaseService');
+const { getOrCreateUser, saveAllEntities, getDernieresObservations, getObservationsUrgentes } = require('./supabaseService');
 
 // --- Configuration ---
 const TELEGRAM_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
@@ -338,12 +338,20 @@ function demarrerBot(app) {
       // Indication que le bot traite le message
       bot.sendChatAction(chatId, 'typing');
 
+      // Identification de l'utilisateur Telegram → user_id Supabase
+      const userId = await getOrCreateUser(
+        msg.from.id,
+        msg.from.username || null,
+        msg.from.first_name || null,
+        msg.from.last_name || null,
+      );
+
       // Parsing de l'observation via Claude
       const observation = await parseObservation(msg.text);
 
-      // Sauvegarde de toutes les entités dans Supabase (non bloquante)
+      // Sauvegarde de toutes les entités avec le user_id résolu
       try {
-        await saveAllEntities(null, observation, { source: 'telegram_text' });
+        await saveAllEntities(userId, observation, { source: 'telegram_text' });
       } catch (erreurSauvegarde) {
         console.warn('[Telegram texte] Sauvegarde Supabase ignorée :', erreurSauvegarde.message);
       }
@@ -371,6 +379,14 @@ function demarrerBot(app) {
       bot.sendMessage(chatId, '\uD83C\uDFA4 Transcription de votre message vocal en cours\\.\\.\\.',
         { parse_mode: 'MarkdownV2' });
 
+      // Identification de l'utilisateur Telegram → user_id Supabase
+      const userId = await getOrCreateUser(
+        msg.from.id,
+        msg.from.username || null,
+        msg.from.first_name || null,
+        msg.from.last_name || null,
+      );
+
       // Étape 1 : Téléchargement du fichier audio depuis Telegram
       const audioBuffer = await telechargerFichierTelegram(bot, msg.voice.file_id);
 
@@ -393,9 +409,9 @@ function demarrerBot(app) {
       // Étape 3 : Parsing via Claude
       const observation = await parseObservation(transcription);
 
-      // Étape 4 : Sauvegarde de toutes les entités dans Supabase (non bloquante)
+      // Étape 4 : Sauvegarde de toutes les entités avec le user_id résolu
       try {
-        await saveAllEntities(null, observation, { source: 'telegram_voice' });
+        await saveAllEntities(userId, observation, { source: 'telegram_voice' });
       } catch (erreurSauvegarde) {
         console.warn('[Telegram vocal] Sauvegarde Supabase ignorée :', erreurSauvegarde.message);
       }
