@@ -161,21 +161,67 @@ async function telechargerFichierTelegram(bot, fileId) {
 
 /**
  * Initialise et démarre le bot Telegram BeeSmart.
- * Le bot écoute les messages texte, vocaux et les commandes.
  *
+ * Deux modes de fonctionnement :
+ *   - Webhook (production) : Telegram envoie les mises à jour via POST sur /telegram/webhook
+ *     → Plus efficace, pas de polling, requis pour Railway/Heroku/Render
+ *     → Nécessite WEBHOOK_URL dans les variables d'environnement
+ *   - Polling (développement local) : Le bot interroge les serveurs Telegram périodiquement
+ *     → Plus simple, fonctionne derrière un NAT/firewall
+ *     → Activé automatiquement si WEBHOOK_URL n'est pas défini
+ *
+ * @param {express.Application} [app] - Instance Express pour monter la route webhook (mode webhook uniquement)
  * @returns {TelegramBot|null} L'instance du bot, ou null si le token n'est pas configuré
  */
-function demarrerBot() {
+function demarrerBot(app) {
   // Vérification du token
   if (!TELEGRAM_TOKEN) {
     console.warn('[Telegram] TELEGRAM_BOT_TOKEN non configuré — bot désactivé.');
     return null;
   }
 
-  // Création du bot en mode polling (interrogation périodique des serveurs Telegram)
-  const bot = new TelegramBot(TELEGRAM_TOKEN, { polling: true });
+  // Détermination du mode : webhook si WEBHOOK_URL est défini, sinon polling
+  const WEBHOOK_URL = process.env.WEBHOOK_URL; // ex: https://web-production-c018.up.railway.app
+  const estModeWebhook = !!WEBHOOK_URL && !!app;
 
-  console.log('[Telegram] Bot BeeSmart démarré en mode polling.');
+  let bot;
+
+  if (estModeWebhook) {
+    // --- Mode Webhook (production) ---
+    // Le bot ne fait PAS de polling — il attend les requêtes POST de Telegram
+    bot = new TelegramBot(TELEGRAM_TOKEN, { webHook: false });
+
+    // Chemin secret pour la route webhook (évite les requêtes non autorisées)
+    const cheminWebhook = `/telegram/webhook/${TELEGRAM_TOKEN}`;
+
+    // Montage de la route Express pour recevoir les updates Telegram
+    app.post(cheminWebhook, (req, res) => {
+      bot.processUpdate(req.body);
+      res.sendStatus(200);
+    });
+
+    // Enregistrement du webhook auprès de Telegram
+    const urlWebhookComplete = `${WEBHOOK_URL}${cheminWebhook}`;
+    bot.setWebHook(urlWebhookComplete)
+      .then(() => {
+        console.log(`[Telegram] Webhook configuré : ${WEBHOOK_URL}/telegram/webhook/***`);
+      })
+      .catch((erreur) => {
+        console.error('[Telegram] Échec de la configuration du webhook :', erreur.message);
+      });
+
+    console.log('[Telegram] Bot BeeSmart démarré en mode webhook.');
+  } else {
+    // --- Mode Polling (développement local) ---
+    bot = new TelegramBot(TELEGRAM_TOKEN, { polling: true });
+
+    // Suppression d'un éventuel webhook résiduel pour éviter les conflits
+    bot.deleteWebHook()
+      .then(() => console.log('[Telegram] Webhook supprimé — mode polling actif.'))
+      .catch(() => {}); // Silencieux si pas de webhook à supprimer
+
+    console.log('[Telegram] Bot BeeSmart démarré en mode polling.');
+  }
 
   // -----------------------------------------------------------------------
   // Commande /start — Message de bienvenue
@@ -374,10 +420,14 @@ function demarrerBot() {
   });
 
   // -----------------------------------------------------------------------
-  // Gestion des erreurs de polling
+  // Gestion des erreurs (polling ou webhook)
   // -----------------------------------------------------------------------
   bot.on('polling_error', (erreur) => {
     console.error('[Telegram] Erreur de polling :', erreur.message);
+  });
+
+  bot.on('webhook_error', (erreur) => {
+    console.error('[Telegram] Erreur de webhook :', erreur.message);
   });
 
   return bot;

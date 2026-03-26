@@ -119,8 +119,10 @@ app.listen(PORT, () => {
     console.warn('');
   }
 
-  // Démarrage du bot Telegram (s'active uniquement si TELEGRAM_BOT_TOKEN est défini)
-  demarrerBot();
+  // Démarrage du bot Telegram
+  // En production (WEBHOOK_URL défini) : monte une route POST /telegram/webhook/...
+  // En local (pas de WEBHOOK_URL) : utilise le polling
+  demarrerBot(app);
 });
 
 module.exports = app;
