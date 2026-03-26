@@ -14,7 +14,7 @@ const TelegramBot = require('node-telegram-bot-api');
 const https = require('https');
 const http = require('http');
 const { transcribeAudio, parseObservation } = require('./nlpService');
-const { saveObservation, getDernieresObservations, getObservationsUrgentes } = require('./supabaseService');
+const { saveAllEntities, getDernieresObservations, getObservationsUrgentes } = require('./supabaseService');
 
 // --- Configuration ---
 const TELEGRAM_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
@@ -341,13 +341,9 @@ function demarrerBot(app) {
       // Parsing de l'observation via Claude
       const observation = await parseObservation(msg.text);
 
-      // Sauvegarde dans Supabase (non bloquante)
+      // Sauvegarde de toutes les entités dans Supabase (non bloquante)
       try {
-        await saveObservation({
-          ...observation,
-          source: 'telegram_text',
-          apiculteur_id: null,
-        });
+        await saveAllEntities(null, observation, { source: 'telegram_text' });
       } catch (erreurSauvegarde) {
         console.warn('[Telegram texte] Sauvegarde Supabase ignorée :', erreurSauvegarde.message);
       }
@@ -397,13 +393,9 @@ function demarrerBot(app) {
       // Étape 3 : Parsing via Claude
       const observation = await parseObservation(transcription);
 
-      // Étape 4 : Sauvegarde dans Supabase (non bloquante)
+      // Étape 4 : Sauvegarde de toutes les entités dans Supabase (non bloquante)
       try {
-        await saveObservation({
-          ...observation,
-          source: 'telegram_voice',
-          apiculteur_id: null,
-        });
+        await saveAllEntities(null, observation, { source: 'telegram_voice' });
       } catch (erreurSauvegarde) {
         console.warn('[Telegram vocal] Sauvegarde Supabase ignorée :', erreurSauvegarde.message);
       }

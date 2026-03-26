@@ -13,7 +13,7 @@
 const express = require('express');
 const multer = require('multer');
 const { transcribeAudio, parseObservation } = require('../services/nlpService');
-const { saveObservation, getRucheContext } = require('../services/supabaseService');
+const { saveAllEntities, getRucheContext } = require('../services/supabaseService');
 
 const router = express.Router();
 
@@ -98,15 +98,16 @@ router.post('/voice', upload.single('audio'), async (req, res) => {
     // Étape 3 : Parsing sémantique via Claude
     const observation = await parseObservation(transcription, contexteRuche);
 
-    // Étape 4 : Sauvegarde dans Supabase (non bloquante si la table n'existe pas encore)
-    let enregistrement = null;
+    // Étape 4 : Sauvegarde de TOUTES les entités dans Supabase
+    // saveAllEntities ventile le JSON Claude dans les tables :
+    // observations, interventions, reines, hausses, taches, recoltes
+    let resultats = null;
     try {
-      enregistrement = await saveObservation({
-        ...observation,
-        ruche_id: ruche_id || null,
-        apiculteur_id: apiculteur_id || null,
-        source: 'voice',
-      });
+      resultats = await saveAllEntities(
+        apiculteur_id || null,  // userId (null si non authentifié)
+        observation,
+        { source: 'voice', ruche_id: ruche_id || null, apiculteur_id: apiculteur_id || null }
+      );
     } catch (erreurSauvegarde) {
       console.warn('[POST /observations/voice] Sauvegarde Supabase ignorée :', erreurSauvegarde.message);
     }
@@ -116,7 +117,14 @@ router.post('/voice', upload.single('audio'), async (req, res) => {
       success: true,
       transcription,
       observation,
-      id: enregistrement?.id || null,
+      id: resultats?.observation_id || null,
+      entites_sauvegardees: resultats ? {
+        interventions: resultats.interventions.length,
+        reines: resultats.reines.length,
+        hausses: resultats.hausses.length,
+        taches: resultats.taches.length,
+        recoltes: resultats.recoltes.length,
+      } : null,
     });
   } catch (erreur) {
     console.error('[POST /observations/voice] Erreur :', erreur.message);
@@ -175,15 +183,14 @@ router.post('/text', async (req, res) => {
     // Étape 2 : Parsing sémantique via Claude
     const observation = await parseObservation(texte.trim(), contexteRuche);
 
-    // Étape 3 : Sauvegarde dans Supabase (non bloquante si la table n'existe pas encore)
-    let enregistrement = null;
+    // Étape 3 : Sauvegarde de TOUTES les entités dans Supabase
+    let resultats = null;
     try {
-      enregistrement = await saveObservation({
-        ...observation,
-        ruche_id: ruche_id || null,
-        apiculteur_id: apiculteur_id || null,
-        source: 'text',
-      });
+      resultats = await saveAllEntities(
+        apiculteur_id || null,
+        observation,
+        { source: 'text', ruche_id: ruche_id || null, apiculteur_id: apiculteur_id || null }
+      );
     } catch (erreurSauvegarde) {
       console.warn('[POST /observations/text] Sauvegarde Supabase ignorée :', erreurSauvegarde.message);
     }
@@ -192,7 +199,14 @@ router.post('/text', async (req, res) => {
     return res.status(200).json({
       success: true,
       observation,
-      id: enregistrement?.id || null,
+      id: resultats?.observation_id || null,
+      entites_sauvegardees: resultats ? {
+        interventions: resultats.interventions.length,
+        reines: resultats.reines.length,
+        hausses: resultats.hausses.length,
+        taches: resultats.taches.length,
+        recoltes: resultats.recoltes.length,
+      } : null,
     });
   } catch (erreur) {
     console.error('[POST /observations/text] Erreur :', erreur.message);
